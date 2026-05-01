@@ -1,4 +1,3 @@
-// src/pages/mainsection.jsx
 import Head from 'next/head';
 
 // 🔹 IMPORT YOUR IDEAS HERE — just add new lines as you create them
