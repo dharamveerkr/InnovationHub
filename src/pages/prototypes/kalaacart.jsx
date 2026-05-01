@@ -33,7 +33,7 @@ const products = [
   { id: 8, name: "Radha Krishna Triptych", category: "madhubani", price: 5500, badge: "✨ Limited Drop", artisan: "Dulari Devi", village: "Jitwarpur", desc: "Three-panel devotional Madhubani set. National Award artisan's work.", img: null },
 
   // Terracotta
-  { id: 9, name: "Terracotta Ghoda (Horse)", category: "terracotta", price: 849, badge: "☀️ Terracotta", artisan: "Ramesh Kumar", village: "Hajipur", desc: "Ritual horse figurine from the ancient Hajipur tradition. Sun-dried & kiln-fired.", img: /images/image9.jpg" },
+  { id: 9, name: "Terracotta Ghoda (Horse)", category: "terracotta", price: 849, badge: "☀️ Terracotta", artisan: "Ramesh Kumar", village: "Hajipur", desc: "Ritual horse figurine from the ancient Hajipur tradition. Sun-dried & kiln-fired.", img: "/images/image9.jpg" },
   { id: 10, name: "Chhath Diya Set (12 pcs)", category: "terracotta", price: 399, badge: "☀️ Chhath/Terracotta", artisan: "Meena Kumari", village: "Patna", desc: "Hand-formed diyas used in Chhath Puja — made from holy Ganga bank clay.", img: null },
   { id: 11, name: "Terracotta Wall Planter", category: "terracotta", price: 1199, badge: "🌿 Eco-Handmade", artisan: "Vijay Kumar", village: "Hajipur", desc: "Hanging wall planter with geometric cutwork. Ideal for succulents and herbs.", img: null },
   { id: 12, name: "Elephant Family Tableau", category: "terracotta", price: 2299, badge: "☀️ Terracotta", artisan: "Sushila Devi", village: "Nalanda", desc: "Mother elephant with two calves — raw clay, unfired, in the ancient Bihar style.", img: null },
