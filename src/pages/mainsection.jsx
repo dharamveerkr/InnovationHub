@@ -5,6 +5,7 @@ import Head from 'next/head';
 import HealthScanAI from '../ideas/HealthScanAI';
 import ArtBridge from '../ideas/ArtBridge';
 import SchoolERP from '../ideas/SchoolERP';
+import KalaaCart from '../ideas/KalaaCart';
 
 
 
@@ -87,6 +88,7 @@ export default function MainSection() {
           <HealthScanAI />
           <ArtBridge />
           <SchoolERP />
+          <KalaaCart />
           
 
 
