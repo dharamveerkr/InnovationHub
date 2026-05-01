@@ -9,7 +9,7 @@ export default function KalaaCart() {
       description= "Kalaacart is a premium e-commerce platform showcasing authentic, handmade art and crafts from Bihar's heritage artisans—where every purchase preserves a tradition."
       tags={['Handmade', 'Bihar', 'Heritage']}
       starred={true}
-      href="/prototypes/kalaacraft"
+      href="/prototypes/kalaacart"
     />
   );
 }
