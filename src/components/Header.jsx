@@ -5,7 +5,7 @@ export default function Header() {
   return (
     <header>
       <Link href="/" className="logo-link" aria-label="Go to home">
-        <div className="logo fade-in">DHARAM<span>VEER</span></div>
+        <div className="logo fade-in">Innovation<span>Hub</span></div>
       </Link>
       
       <nav className="fade-in delay-1">
