@@ -151,35 +151,43 @@ function useImageResize() {
 
 function useImageToPDF() {
   return useCallback(async (files) => {
-    const { jsPDF } = await import("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js").then(
-      () => window.jspdf
-    ).catch(() => {
-      throw new Error("jsPDF not available — using canvas fallback");
-    });
     const doc = new jsPDF();
+    
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      
+      // Convert file to DataURL
       const dataUrl = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result);
-        r.onerror = rej;
-        r.readAsDataURL(file);
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
       });
+      
+      // Add new page for all files after the first
       if (i > 0) doc.addPage();
+      
+      // Load image to get dimensions
       const img = new Image();
       await new Promise((res) => {
         img.onload = res;
         img.src = dataUrl;
       });
-      const pw = doc.internal.pageSize.getWidth();
-      const ph = doc.internal.pageSize.getHeight();
-      const ratio = Math.min(pw / img.width, ph / img.height);
-      const w = img.width * ratio;
-      const h = img.height * ratio;
-      const x = (pw - w) / 2;
-      const y = (ph - h) / 2;
-      doc.addImage(dataUrl, "JPEG", x, y, w, h);
+      
+      // Calculate fit dimensions (centered, contain)
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const scale = Math.min(pageWidth / img.width, pageHeight / img.height);
+      const imgW = img.width * scale;
+      const imgH = img.height * scale;
+      const x = (pageWidth - imgW) / 2;
+      const y = (pageHeight - imgH) / 2;
+      
+      // Add image to PDF
+      doc.addImage(dataUrl, "JPEG", x, y, imgW, imgH);
     }
+    
+    // Return as Blob for download
     const blob = doc.output("blob");
     return { blob, mimeType: "application/pdf", ext: "pdf" };
   }, []);
