@@ -1,469 +1,304 @@
-import { jsPDF } from "jspdf";
-import { useState, useRef, useCallback } from "react";
+"use client";
+import { useState, useRef, useCallback, useEffect } from "react";
 
+// ── Pure-JS helpers (zero deps) ──────────────────────────────────────────────
+function imgToEl(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => rej(new Error("Cannot load image"));
+    img.src = url;
+  });
+}
+
+async function convertImage(file, fmt) {
+  const img = await imgToEl(file);
+  const c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  const ctx = c.getContext("2d");
+  if (fmt === "jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); }
+  ctx.drawImage(img, 0, 0);
+  const mime = fmt === "webp" ? "image/webp" : fmt === "jpeg" ? "image/jpeg" : "image/png";
+  return new Promise((res, rej) =>
+    c.toBlob(b => b ? res({ blob: b, ext: fmt === "jpeg" ? "jpg" : fmt }) : rej(new Error("Failed")), mime, 0.92)
+  );
+}
+
+async function resizeImage(file, w, h, q) {
+  const img = await imgToEl(file);
+  const ratio = img.width / img.height;
+  const fw = w || (h ? Math.round(h * ratio) : img.width);
+  const fh = h || (w ? Math.round(w / ratio) : img.height);
+  const c = document.createElement("canvas");
+  c.width = fw; c.height = fh;
+  c.getContext("2d").drawImage(img, 0, 0, fw, fh);
+  return new Promise((res, rej) =>
+    c.toBlob(b => b ? res({ blob: b, ext: "jpg", w: fw, h: fh }) : rej(new Error("Failed")), "image/jpeg", q / 100)
+  );
+}
+
+async function imagesToPDF(files) {
+  const enc = new TextEncoder();
+  const parts = []; let pos = 0;
+  const offsets = [];
+  const write = s => { const b = enc.encode(s); parts.push(b); pos += b.length; };
+  const writeRaw = b => { parts.push(b); pos += b.length; };
+  write("%PDF-1.4\n");
+  const pages = [];
+  for (const f of files) {
+    const img = await imgToEl(f);    const scale = Math.min(595 / img.width, 842 / img.height, 1);
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    const b64 = c.toDataURL("image/jpeg", 0.88).split(",")[1];
+    pages.push({ raw: Uint8Array.from(atob(b64), x => x.charCodeAt(0)), w: c.width, h: c.height });
+  }
+  let id = 3;
+  const imgIds = [], pageIds = [];
+  for (let i = 0; i < pages.length; i++) {
+    const { raw, w, h } = pages[i];
+    offsets[id] = pos;
+    write(`${id} 0 obj\n<</Type/XObject/Subtype/Image/Width ${w}/Height ${h}/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length ${raw.length}>>\nstream\n`);
+    writeRaw(raw); write("\nendstream\nendobj\n");
+    imgIds.push(id++);
+    const cs = `q ${w} 0 0 ${h} 0 0 cm /Im${i} Do Q`;
+    offsets[id] = pos;
+    write(`${id} 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 ${w} ${h}]/Resources<</XObject<</Im${i} ${imgIds[i]} 0 R>>>>/Contents ${id + 1} 0 R>>\nendobj\n`);
+    pageIds.push(id++);
+    offsets[id] = pos;
+    write(`${id} 0 obj\n<</Length ${cs.length}>>\nstream\n${cs}\nendstream\nendobj\n`);
+    id++;
+  }
+  offsets[2] = pos;
+  write(`2 0 obj\n<</Type/Pages/Kids[${pageIds.map(x => `${x} 0 R`).join(" ")}]/Count ${pages.length}>>\nendobj\n`);
+  offsets[1] = pos;
+  write(`1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n`);
+  const xp = pos;
+  write(`xref\n0 ${id}\n0000000000 65535 f\n`);
+  for (let i = 1; i < id; i++) write(`${String(offsets[i] || 0).padStart(10, "0")} 00000 n\n`);
+  write(`trailer\n<</Size ${id}/Root 1 0 R>>\nstartxref\n${xp}\n%%EOF\n`);
+  return { blob: new Blob(parts, { type: "application/pdf" }), ext: "pdf" };
+}
+
+async function aiAnalyze(file) {
+  const b64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+  
+  // Using OpenAI (update to use NEXT_PUBLIC_OPENAI_API_KEY)
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { 
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.NEXT_PUBLIC_OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({      model: "gpt-4o-mini",
+      max_tokens: 1000,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: `${file.type};base64,${b64}` } },
+          { type: "text", text: "Analyze this image concisely: describe what you see, note colors and composition, assess quality, and give 2–3 practical suggestions." }
+        ]
+      }]
+    })
+  });
+  
+  const d = await resp.json();
+  return d.choices?.[0]?.message?.content || "No analysis returned.";
+}
+
+function triggerDownload(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ── Tokens ───────────────────────────────────────────────────────────────────
+const C = { bg: "#06060e", surface: "#0c0c1a", border: "#181828", text: "#e0e0f0", muted: "#44445e", green: "#1fffa0", orange: "#ff7a38", blue: "#3d9bff", purple: "#9168ff" };
+const TAG_COL = { BROWSER: C.green, AI: C.orange, "NODE.JS": C.purple, BACKEND: C.purple, API: C.orange };
 const TOOLS = [
-  {
-    id: "img-convert",
-    label: "Image Convert",
-    icon: "⇄",
-    tag: "INSTANT",
-    tagColor: "#00ff9d",
-    desc: "JPG ↔ PNG ↔ WEBP",
-    category: "image",
-    accept: "image/*",
-  },
-  {
-    id: "img-resize",
-    label: "Resize & Crop",
-    icon: "⊡",
-    tag: "INSTANT",
-    tagColor: "#00ff9d",
-    desc: "Resize, crop, compress",
-    category: "image",
-    accept: "image/*",
-  },
-  {
-    id: "img-bg",
-    label: "Remove Background",
-    icon: "✦",
-    tag: "AI API",
-    tagColor: "#ff6b35",
-    desc: "remove.bg / ClipDrop",
-    category: "ai",
-    accept: "image/*",
-  },
-  {
-    id: "img-upscale",
-    label: "AI Upscale",
-    icon: "↑↑",
-    tag: "AI API",
-    tagColor: "#ff6b35",
-    desc: "Replicate / TensorFlow",
-    category: "ai",
-    accept: "image/*",
-  },
-  {
-    id: "pdf-img",
-    label: "PDF → Image",
-    icon: "⬡",
-    tag: "NODE.JS",
-    tagColor: "#7c6fcd",
-    desc: "Extract pages as images",
-    category: "pdf",
-    accept: ".pdf",
-  },
-  {
-    id: "img-pdf",
-    label: "Image → PDF",
-    icon: "⬢",
-    tag: "INSTANT",
-    tagColor: "#00ff9d",
-    desc: "Combine images to PDF",
-    category: "pdf",
-    accept: "image/*",
-  },
-  {
-    id: "docx-pdf",
-    label: "DOCX → PDF",
-    icon: "⬛",
-    tag: "BACKEND",
-    tagColor: "#7c6fcd",
-    desc: "LibreOffice / Puppeteer",
-    category: "doc",
-    accept: ".docx,.doc",
-  },
-  {
-    id: "ai-analyze",
-    label: "AI Analyze",
-    icon: "◈",
-    tag: "AI",
-    tagColor: "#ff6b35",
-    desc: "Describe & analyze file",
-    category: "ai",
-    accept: "image/*",
-  },
+  { id: "convert",  label: "Image Convert",  icon: "↔",  tag: "BROWSER",  accept: "image/*",    multi: false, desc: "JPG · PNG · WEBP" },
+  { id: "resize",   label: "Resize / Crop",  icon: "⤡",  tag: "BROWSER",  accept: "image/*",    multi: false, desc: "Dimensions & quality" },
+  { id: "img2pdf",  label: "Images → PDF",   icon: "⊞",  tag: "BROWSER",  accept: "image/*",    multi: true,  desc: "Pure-JS PDF writer" },
+  { id: "analyze",  label: "AI Analyze",     icon: "◎",  tag: "AI",       accept: "image/*",    multi: false, desc: "GPT-4 Vision API" },
+  { id: "pdf2img",  label: "PDF → Image",    icon: "⬡",  tag: "NODE.JS",  accept: ".pdf",       multi: false, desc: "pdf-poppler · pdfjs" },
+  { id: "docx2pdf", label: "DOCX → PDF",     icon: "⬛",  tag: "BACKEND",  accept: ".docx,.doc", multi: false, desc: "LibreOffice · Puppeteer" },
+  { id: "bg",       label: "Remove BG",      icon: "✦",  tag: "API",      accept: "image/*",    multi: false, desc: "remove.bg · ClipDrop" },
+  { id: "upscale",  label: "AI Upscale",     icon: "⤴",  tag: "API",      accept: "image/*",    multi: false, desc: "Replicate · ESRGAN" },
 ];
 
-const CATEGORY_COLORS = {
-  image: "#00ff9d",
-  ai: "#ff6b35",
-  pdf: "#7c6fcd",
-  doc: "#4ecdc4",
-};
-
-function useImageConvert() {
-  return useCallback((file, targetFormat) => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d");
-        if (targetFormat === "jpeg") {
-          ctx.fillStyle = "#fff";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(url);
-        const mimeType =
-          targetFormat === "webp"
-            ? "image/webp"
-            : targetFormat === "jpeg"
-            ? "image/jpeg"
-            : "image/png";
-        canvas.toBlob((blob) => {
-          if (blob) resolve({ blob, mimeType, ext: targetFormat === "jpeg" ? "jpg" : targetFormat });
-          else reject(new Error("Conversion failed"));
-        }, mimeType, 0.92);
-      };
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.src = url;
-    });
-  }, []);
+// ── Components ──────────────────────────────────────────────────────────────
+function Chip({ label }) {
+  const col = TAG_COL[label] || C.muted;
+  return <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 1.2, padding: "2px 8px", borderRadius: 20, border: `1px solid ${col}40`, color: col, background: `${col}12`, fontFamily: "monospace" }}>{label}</span>;
 }
 
-function useImageResize() {
-  return useCallback((file, width, height, quality) => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ratio = img.width / img.height;
-        if (width && !height) height = Math.round(width / ratio);
-        if (height && !width) width = Math.round(height * ratio);
-        canvas.width = width || img.width;
-        canvas.height = height || img.height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        URL.revokeObjectURL(url);
-        canvas.toBlob((blob) => {
-          if (blob) resolve({ blob, mimeType: "image/jpeg", ext: "jpg" });
-          else reject(new Error("Resize failed"));
-        }, "image/jpeg", quality / 100);
-      };
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.src = url;
-    });
-  }, []);
-}
-
-function useImageToPDF() {
-  return useCallback(async (files) => {
-    const doc = new jsPDF();
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      
-      // Convert file to DataURL
-      const dataUrl = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result);
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
-      
-      // Add new page for all files after the first
-      if (i > 0) doc.addPage();
-      
-      // Load image to get dimensions
-      const img = new Image();
-      await new Promise((res) => {
-        img.onload = res;
-        img.src = dataUrl;
-      });
-      
-      // Calculate fit dimensions (centered, contain)
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const scale = Math.min(pageWidth / img.width, pageHeight / img.height);
-      const imgW = img.width * scale;
-      const imgH = img.height * scale;
-      const x = (pageWidth - imgW) / 2;
-      const y = (pageHeight - imgH) / 2;
-      
-      // Add image to PDF
-      doc.addImage(dataUrl, "JPEG", x, y, imgW, imgH);
-    }
-    
-    // Return as Blob for download
-    const blob = doc.output("blob");
-    return { blob, mimeType: "application/pdf", ext: "pdf" };
-  }, []);
-}
-
-function useAIAnalyze() {
-  return useCallback(async (file) => {
-    const toBase64 = (f) =>
-      new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result.split(",")[1]);
-        r.onerror = rej;
-        r.readAsDataURL(f);
-      });
-    
-    const base64 = await toBase64(file);
-    const mediaType = file.type;
-
-    // 🔁 OpenAI API Call (replaces Anthropic)
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Analyze this image thoroughly. Describe: 1) What you see, 2) Colors & composition, 3) Quality assessment, 4) Suggested improvements or use cases. Be concise but insightful." },
-              { type: "image_url", image_url: { url: `data:${mediaType};base64,${base64}` } }
-            ]
-          }
-        ],
-        max_tokens: 1000
-      })
-    });
-
-    const data = await response.json();
-    
-    // 🔁 OpenAI response structure (different from Anthropic)
-    return data.choices?.[0]?.message?.content || "No analysis available.";
-  }, []);
-}
-
-function DropZone({ tool, onFiles }) {
-  const [dragging, setDragging] = useState(false);
-  const inputRef = useRef();
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragging(false);
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length) onFiles(files);
-  };
-
+function PrimaryBtn({ children, onClick, disabled, col }) {
+  const [h, setH] = useState(false);
   return (
-    <div
-      onClick={() => inputRef.current?.click()}
-      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={handleDrop}
+    <button onClick={onClick} disabled={disabled}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{
-        border: `2px dashed ${dragging ? CATEGORY_COLORS[tool.category] : "#2a2a3a"}`,
-        borderRadius: 12,
-        padding: "32px 24px",
-        textAlign: "center",
-        cursor: "pointer",
-        transition: "all 0.2s",
-        background: dragging ? `${CATEGORY_COLORS[tool.category]}0a` : "transparent",
-      }}
-    >
-      <div style={{ fontSize: 32, marginBottom: 8, opacity: 0.5 }}>📂</div>
-      <div style={{ color: "#888", fontSize: 13 }}>
-        Drop file here or <span style={{ color: CATEGORY_COLORS[tool.category] }}>click to browse</span>
-      </div>
-      <div style={{ color: "#555", fontSize: 11, marginTop: 4 }}>Accepts: {tool.accept}</div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={tool.accept}
-        multiple={tool.id === "img-pdf"}
-        style={{ display: "none" }}
-        onChange={(e) => onFiles(Array.from(e.target.files))}
-      />
+        width: "100%", padding: "11px 0", borderRadius: 9, border: `1px solid ${disabled ? C.border : h ? col : col + "55"}`,
+        background: disabled ? C.border : h ? `${col}28` : `${col}12`,        color: disabled ? C.muted : col, cursor: disabled ? "not-allowed" : "pointer",
+        fontFamily: "monospace", fontWeight: 800, fontSize: 12, letterSpacing: 1.2,
+        transition: "all 0.15s",
+      }}>{children}</button>
+  );
+}
+
+function Drop({ accept, multi, onFiles, col }) {
+  const [over, setOver] = useState(false);
+  const ref = useRef();
+  return (
+    <div onClick={() => ref.current?.click()}
+      onDragOver={e => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={e => { e.preventDefault(); setOver(false); const f = Array.from(e.dataTransfer.files); if (f.length) onFiles(f); }}
+      style={{ border: `2px dashed ${over ? col : C.border}`, borderRadius: 10, padding: "26px 16px", textAlign: "center", cursor: "pointer", transition: "all 0.2s", background: over ? `${col}08` : "transparent" }}>
+      <div style={{ fontSize: 26, opacity: 0.3, marginBottom: 6 }}>⬆</div>
+      <div style={{ color: C.muted, fontSize: 12 }}>Drop {multi ? "files" : "file"} or <span style={{ color: col }}>browse</span></div>
+      <div style={{ color: C.border, fontSize: 10, marginTop: 3 }}>{accept}</div>
+      <input ref={ref} type="file" accept={accept} multiple={multi} style={{ display: "none" }} onChange={e => onFiles(Array.from(e.target.files))} />
     </div>
   );
 }
 
-function ToolPanel({ tool, onClose }) {
+function Modal({ tool, onClose }) {
+  const col = TAG_COL[tool.tag] || C.green;
   const [files, setFiles] = useState([]);
-  const [status, setStatus] = useState("idle"); // idle | processing | done | error
+  const [fmt, setFmt] = useState("png");
+  const [w, setW] = useState(""); const [h, setH] = useState(""); const [q, setQ] = useState(85);
+  const [phase, setPhase] = useState("idle");
   const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
-  const [config, setConfig] = useState({ format: "png", width: "", height: "", quality: 85 });
   const [aiText, setAiText] = useState("");
-
-  const convertImage = useImageConvert();
-  const resizeImage = useImageResize();
-  const imagesToPDF = useImageToPDF();
-  const aiAnalyze = useAIAnalyze();
-
-  const preview = files[0] && files[0].type.startsWith("image/")
-    ? URL.createObjectURL(files[0])
-    : null;
-
-  const handleProcess = async () => {
-    if (!files.length) return;
-    setStatus("processing");
-    setError("");
-    setAiText("");
+  const [err, setErr] = useState("");
+  const [preview, setPreview] = useState(null);
+  
+  useEffect(() => {
+    if (!files[0]?.type?.startsWith("image/")) { setPreview(null); return; }
+    const url = URL.createObjectURL(files[0]);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [files[0]]);
+  
+  const run = async () => {
+    setPhase("working"); setErr(""); setAiText(""); setResult(null);
     try {
-      if (tool.id === "img-convert") {
-        const out = await convertImage(files[0], config.format);
-        setResult(out);
-      } else if (tool.id === "img-resize") {
-        const out = await resizeImage(files[0], parseInt(config.width) || 0, parseInt(config.height) || 0, config.quality);
-        setResult(out);
-      } else if (tool.id === "img-pdf") {
-        const out = await imagesToPDF(files);
-        setResult(out);
-      } else if (tool.id === "ai-analyze") {
-        const text = await aiAnalyze(files[0]);
-        setAiText(text);
+      if (tool.id === "convert")  { setResult(await convertImage(files[0], fmt)); setPhase("done"); }
+      else if (tool.id === "resize")  { setResult(await resizeImage(files[0], parseInt(w)||0, parseInt(h)||0, q)); setPhase("done"); }
+      else if (tool.id === "img2pdf") { setResult(await imagesToPDF(files)); setPhase("done"); }
+      else if (tool.id === "analyze") {
+        setPhase("ai");        setAiText(await aiAnalyze(files[0]));
+        setPhase("done");
       } else {
-        await new Promise((r) => setTimeout(r, 1200));
-        setError(`"${tool.label}" requires a ${tool.tag} setup. In a real app, this would call your Node.js backend or external API.`);
-        setStatus("error");
-        return;
+        const hint = tool.id === "pdf2img" ? "Node.js + pdfjs-dist or pdf-poppler"
+          : tool.id === "docx2pdf" ? "Node.js + LibreOffice CLI or Puppeteer"
+            : "an external API such as remove.bg or Replicate";
+        throw new Error(`"${tool.label}" requires ${hint} running on a backend server.`);
       }
-      setStatus("done");
-    } catch (e) {
-      setError(e.message);
-      setStatus("error");
-    }
+    } catch (e) { setErr(e.message); setPhase("error"); }
   };
-
-  const handleDownload = () => {
+  
+  const dl = () => {
     if (!result) return;
-    const url = URL.createObjectURL(result.blob);
-    const a = document.createElement("a");
-    const baseName = files[0]?.name.split(".")[0] || "output";
-    a.href = url;
-    a.download = `${baseName}_converted.${result.ext}`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const base = files[0]?.name.replace(/\.[^.]+$/, "") || "output";
+    triggerDownload(result.blob, `${base}.${result.ext}`);
   };
-
-  const accent = CATEGORY_COLORS[tool.category];
-
+  
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16,
-    }}>
-      <div style={{
-        background: "#0e0e18", border: `1px solid ${accent}30`, borderRadius: 20,
-        width: "100%", maxWidth: 540, maxHeight: "90vh", overflowY: "auto",
-        boxShadow: `0 0 60px ${accent}20`,
-      }}>
-        {/* Header */}
-        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #1a1a2e", display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{
-            width: 42, height: 42, borderRadius: 10, background: `${accent}18`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 18, color: accent, border: `1px solid ${accent}30`,
-          }}>{tool.icon}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ color: "#fff", fontWeight: 700, fontSize: 16, fontFamily: "monospace" }}>{tool.label}</div>
-            <div style={{ color: "#555", fontSize: 12 }}>{tool.desc}</div>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(3,3,10,0.93)", backdropFilter: "blur(12px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 12 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: C.surface, border: `1px solid ${col}35`, borderRadius: 18, width: "100%", maxWidth: 480, maxHeight: "92vh", overflowY: "auto", boxShadow: `0 0 60px ${col}18` }}>
+        {/* header */}
+        <div style={{ padding: "16px 18px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 9, background: `${col}18`, border: `1px solid ${col}30`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, color: col, flexShrink: 0 }}>{tool.icon}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: C.text, fontWeight: 700, fontSize: 14, fontFamily: "monospace" }}>{tool.label}</div>
+            <div style={{ color: C.muted, fontSize: 11 }}>{tool.desc}</div>
           </div>
-          <div style={{
-            padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700,
-            background: `${accent}20`, color: accent, border: `1px solid ${accent}40`, fontFamily: "monospace",
-          }}>{tool.tag}</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18, padding: 4 }}>✕</button>
+          <Chip label={tool.tag} />
+          <button onClick={onClose} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 17, padding: 4, flexShrink: 0 }}>✕</button>
         </div>
-
-        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Drop Zone */}
-          <DropZone tool={tool} onFiles={setFiles} />
-
-          {/* Preview */}
+        <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 13 }}>
+          <Drop accept={tool.accept} multi={tool.multi} onFiles={setFiles} col={col} />
           {preview && (
-            <div style={{ borderRadius: 10, overflow: "hidden", border: "1px solid #1a1a2e", maxHeight: 200 }}>
-              <img src={preview} alt="preview" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#080810" }} />
+            <div style={{ borderRadius: 8, overflow: "hidden", border: `1px solid ${C.border}`, maxHeight: 170, background: "#06060e", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <img src={preview} alt="" style={{ maxWidth: "100%", maxHeight: 170, objectFit: "contain", display: "block" }} />
             </div>
           )}
-
           {files.length > 0 && (
-            <div style={{ color: "#555", fontSize: 12, fontFamily: "monospace" }}>
-              {files.length === 1 ? files[0].name : `${files.length} files selected`}
+            <div style={{ color: C.muted, fontSize: 11, fontFamily: "monospace" }}>
+              {files.length === 1 ? `${files[0].name}  ·  ${(files[0].size/1024).toFixed(0)} KB` : `${files.length} files selected`}
             </div>
           )}
-
-          {/* Config */}
-          {tool.id === "img-convert" && (
-            <div style={{ display: "flex", gap: 8 }}>
-              {["png", "jpeg", "webp"].map((f) => (
-                <button key={f} onClick={() => setConfig((c) => ({ ...c, format: f }))} style={{
-                  flex: 1, padding: "8px 0", borderRadius: 8, border: `1px solid ${config.format === f ? accent : "#2a2a3a"}`,
-                  background: config.format === f ? `${accent}15` : "transparent",
-                  color: config.format === f ? accent : "#555", cursor: "pointer", fontSize: 12, fontFamily: "monospace", fontWeight: 700,
+          {/* Format selector */}
+          {tool.id === "convert" && (
+            <div style={{ display: "flex", gap: 7 }}>
+              {["png","jpeg","webp"].map(f => (
+                <button key={f} onClick={() => setFmt(f)} style={{
+                  flex: 1, padding: "8px 0", borderRadius: 8,
+                  border: `1px solid ${fmt===f ? col : C.border}`,                  background: fmt===f ? `${col}15` : "transparent",
+                  color: fmt===f ? col : C.muted,
+                  cursor: "pointer", fontFamily: "monospace", fontWeight: 700, fontSize: 11, transition: "all 0.14s",
                 }}>{f.toUpperCase()}</button>
               ))}
             </div>
           )}
-
-          {tool.id === "img-resize" && (
+          {/* Resize opts */}
+          {tool.id === "resize" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ display: "flex", gap: 10 }}>
-                {[{ key: "width", label: "Width (px)" }, { key: "height", label: "Height (px)" }].map(({ key, label }) => (
-                  <div key={key} style={{ flex: 1 }}>
-                    <label style={{ color: "#555", fontSize: 11, display: "block", marginBottom: 4, fontFamily: "monospace" }}>{label}</label>
-                    <input
-                      type="number" value={config[key]}
-                      onChange={(e) => setConfig((c) => ({ ...c, [key]: e.target.value }))}
-                      placeholder="auto"
-                      style={{
-                        width: "100%", padding: "8px 10px", borderRadius: 8,
-                        border: "1px solid #2a2a3a", background: "#080810", color: "#ddd",
-                        fontSize: 13, fontFamily: "monospace", boxSizing: "border-box",
-                      }}
-                    />
+              <div style={{ display: "flex", gap: 9 }}>
+                {[["W px", w, setW],["H px", h, setH]].map(([lbl,val,set]) => (
+                  <div key={lbl} style={{ flex: 1 }}>
+                    <div style={{ color: C.muted, fontSize: 10, fontFamily: "monospace", marginBottom: 4 }}>{lbl}</div>
+                    <input type="number" value={val} onChange={e => set(e.target.value)} placeholder="auto"
+                      style={{ width: "100%", padding: "8px 10px", borderRadius: 7, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 13, fontFamily: "monospace", boxSizing: "border-box", outline: "none" }} />
                   </div>
                 ))}
               </div>
               <div>
-                <label style={{ color: "#555", fontSize: 11, display: "block", marginBottom: 4, fontFamily: "monospace" }}>Quality: {config.quality}%</label>
-                <input type="range" min={10} max={100} value={config.quality}
-                  onChange={(e) => setConfig((c) => ({ ...c, quality: +e.target.value }))}
-                  style={{ width: "100%", accentColor: accent }}
-                />
+                <div style={{ display: "flex", justifyContent: "space-between", color: C.muted, fontSize: 10, fontFamily: "monospace", marginBottom: 5 }}>
+                  <span>QUALITY</span><span style={{ color: col }}>{q}%</span>
+                </div>
+                <input type="range" min={10} max={100} value={q} onChange={e => setQ(+e.target.value)} style={{ width: "100%", accentColor: col }} />
               </div>
             </div>
           )}
-
-          {/* Process Button */}
-          <button onClick={handleProcess} disabled={!files.length || status === "processing"} style={{
-            padding: "12px 0", borderRadius: 10, border: "none",
-            background: !files.length ? "#1a1a2e" : `linear-gradient(135deg, ${accent}, ${accent}aa)`,
-            color: !files.length ? "#333" : "#000", cursor: !files.length ? "not-allowed" : "pointer",
-            fontWeight: 800, fontSize: 13, fontFamily: "monospace", letterSpacing: 1,
-            transition: "all 0.2s",
-          }}>
-            {status === "processing" ? "⟳ PROCESSING..." : `▶ RUN ${tool.label.toUpperCase()}`}
-          </button>
-
-          {/* Result */}
-          {status === "done" && result && (
-            <div style={{ background: "#00ff9d0a", border: "1px solid #00ff9d30", borderRadius: 10, padding: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <PrimaryBtn onClick={run} disabled={!files.length || phase === "working" || phase === "ai"} col={col}>
+            {phase === "working" || phase === "ai" ? "⟳  PROCESSING…" : `▶  RUN  ${tool.label.toUpperCase()}`}
+          </PrimaryBtn>
+          {/* AI result */}
+          {(phase === "ai" || (phase === "done" && aiText)) && (
+            <div style={{ background: `${C.orange}08`, border: `1px solid ${C.orange}22`, borderRadius: 10, padding: 14 }}>
+              <div style={{ color: C.orange, fontSize: 10, fontFamily: "monospace", fontWeight: 800, marginBottom: 7 }}>◎ AI ANALYSIS</div>
+              <div style={{ color: "#aaaac0", fontSize: 13, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
+                {aiText || <span style={{ opacity: 0.35 }}>Thinking…</span>}
+              </div>
+            </div>
+          )}
+          {/* Download */}
+          {phase === "done" && result && (
+            <div style={{ background: `${C.green}07`, border: `1px solid ${C.green}22`, borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <div>
-                <div style={{ color: "#00ff9d", fontWeight: 700, fontSize: 13, fontFamily: "monospace" }}>✓ DONE</div>
-                <div style={{ color: "#555", fontSize: 11, marginTop: 2 }}>{(result.blob.size / 1024).toFixed(1)} KB · .{result.ext}</div>
+                <div style={{ color: C.green, fontFamily: "monospace", fontWeight: 700, fontSize: 13 }}>✓ COMPLETE</div>
+                <div style={{ color: C.muted, fontSize: 11, marginTop: 2 }}>
+                  {(result.blob.size/1024).toFixed(1)} KB · .{result.ext}
+                  {result.w ? `  ·  ${result.w}×${result.h}` : ""}
+                </div>
               </div>
-              <button onClick={handleDownload} style={{
-                padding: "8px 16px", borderRadius: 8, border: "1px solid #00ff9d40",
-                background: "#00ff9d15", color: "#00ff9d", cursor: "pointer", fontSize: 12, fontFamily: "monospace", fontWeight: 700,
-              }}>↓ DOWNLOAD</button>
-            </div>
+              <button onClick={dl} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.green}40`, background: `${C.green}12`, color: C.green, cursor: "pointer", fontSize: 12, fontFamily: "monospace", fontWeight: 700, flexShrink: 0 }}>↓ SAVE</button>            </div>
           )}
-
-          {status === "done" && aiText && (
-            <div style={{ background: "#ff6b350a", border: "1px solid #ff6b3530", borderRadius: 10, padding: 16 }}>
-              <div style={{ color: "#ff6b35", fontWeight: 700, fontSize: 12, fontFamily: "monospace", marginBottom: 8 }}>◈ AI ANALYSIS</div>
-              <div style={{ color: "#aaa", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{aiText}</div>
-            </div>
-          )}
-
-          {status === "error" && (
-            <div style={{ background: "#ff4d4d0a", border: "1px solid #ff4d4d30", borderRadius: 10, padding: 16 }}>
-              <div style={{ color: "#ff4d4d", fontWeight: 700, fontSize: 12, fontFamily: "monospace", marginBottom: 4 }}>⚠ NOTE</div>
-              <div style={{ color: "#888", fontSize: 12, lineHeight: 1.5 }}>{error}</div>
+          {/* Error */}
+          {phase === "error" && (
+            <div style={{ background: "#ff4d4d07", border: "1px solid #ff4d4d22", borderRadius: 10, padding: 13 }}>
+              <div style={{ color: "#ff6a6a", fontSize: 10, fontFamily: "monospace", fontWeight: 800, marginBottom: 5 }}>⚠  BACKEND REQUIRED</div>
+              <div style={{ color: C.muted, fontSize: 12, lineHeight: 1.6 }}>{err}</div>
             </div>
           )}
         </div>
@@ -472,133 +307,94 @@ function ToolPanel({ tool, onClose }) {
   );
 }
 
-export default function FileForge() {
-  const [activeTool, setActiveTool] = useState(null);
-  const [filter, setFilter] = useState("all");
-
-  const categories = [
-    { id: "all", label: "ALL" },
-    { id: "image", label: "IMAGE" },
-    { id: "pdf", label: "PDF" },
-    { id: "doc", label: "DOC" },
-    { id: "ai", label: "AI" },
-  ];
-
-  const filtered = filter === "all" ? TOOLS : TOOLS.filter((t) => t.category === filter);
-
+function Card({ tool, onClick }) {
+  const col = TAG_COL[tool.tag] || C.muted;
+  const [h, setH] = useState(false);
   return (
-    <div style={{
-      minHeight: "100vh", background: "#080810",
-      fontFamily: "'Courier New', monospace",
-      padding: "32px 20px",
-    }}>
-      {/* BG grid */}
-      <div style={{
-        position: "fixed", inset: 0, zIndex: 0,
-        backgroundImage: "linear-gradient(#1a1a2e 1px, transparent 1px), linear-gradient(90deg, #1a1a2e 1px, transparent 1px)",
-        backgroundSize: "40px 40px",
-        opacity: 0.4,
-        pointerEvents: "none",
-      }} />
+    <button onClick={onClick}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{
+        background: h ? `${col}09` : "#0a0a17",
+        border: `1px solid ${h ? col+"44" : C.border}`,
+        borderRadius: 14, padding: "16px 14px",
+        textAlign: "left", cursor: "pointer",
+        transition: "all 0.17s",
+        transform: h ? "translateY(-2px)" : "none",
+        boxShadow: h ? `0 8px 28px ${col}14` : "none",
+        display: "flex", flexDirection: "column", gap: 10,
+      }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ width: 34, height: 34, borderRadius: 8, background: `${col}14`, border: `1px solid ${col}22`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, color: col }}>{tool.icon}</div>
+        <Chip label={tool.tag} />
+      </div>
+      <div>
+        <div style={{ color: "#d8d8ee", fontWeight: 700, fontSize: 13, fontFamily: "monospace", marginBottom: 3 }}>{tool.label}</div>
+        <div style={{ color: "#30304a", fontSize: 11 }}>{tool.desc}</div>
+      </div>
+    </button>
+  );
+}
 
-      <div style={{ maxWidth: 700, margin: "0 auto", position: "relative", zIndex: 1 }}>
+// ── App ──────────────────────────────────────────────────────────────
+export default function FileForge() {
+  const [active, setActive] = useState(null);
+  const [filter, setFilter] = useState("ALL");
+  const [winW, setWinW] = useState(typeof window !== "undefined" ? window.innerWidth : 800);
+  
+  useEffect(() => {    const fn = () => setWinW(window.innerWidth);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+  
+  const isMobile = winW < 460;
+  const cols = isMobile ? 1 : winW < 640 ? 2 : 2;
+  const cats = ["ALL", "BROWSER", "AI", "BACKEND"];
+  const filtered = filter === "ALL" ? TOOLS
+    : filter === "BACKEND" ? TOOLS.filter(t => ["NODE.JS","BACKEND","API"].includes(t.tag))
+      : TOOLS.filter(t => t.tag === filter);
+  
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+      <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, backgroundImage: `radial-gradient(${C.border} 1px, transparent 1px)`, backgroundSize: "26px 26px", opacity: 0.55 }} />
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: isMobile ? "24px 14px 48px" : "44px 24px 64px", position: "relative", zIndex: 1 }}>
         {/* Header */}
-        <div style={{ marginBottom: 40, textAlign: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 8 }}>
-            <div style={{
-              width: 44, height: 44, borderRadius: 10,
-              background: "linear-gradient(135deg, #00ff9d, #4ecdc4)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 22, boxShadow: "0 0 24px #00ff9d40",
-            }}>⚙</div>
-            <h1 style={{
-              margin: 0, fontSize: 32, fontWeight: 900, letterSpacing: -1,
-              background: "linear-gradient(135deg, #fff, #00ff9d)",
-              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-            }}>FileForge</h1>
+        <div style={{ marginBottom: 36, display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: isMobile ? 42 : 50, height: isMobile ? 42 : 50, borderRadius: 13, flexShrink: 0, background: `conic-gradient(from 200deg, ${C.green}, ${C.blue}, ${C.purple}, ${C.green})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: isMobile ? 20 : 24, boxShadow: `0 0 28px ${C.green}28` }}>⚙</div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: isMobile ? 22 : 30, fontWeight: 900, fontFamily: "'Courier New', monospace", letterSpacing: -0.5, color: C.text }}>FileForge</h1>
+            <div style={{ color: C.muted, fontSize: isMobile ? 9 : 10, fontFamily: "monospace", letterSpacing: 1.5, marginTop: 2 }}>FILE CONVERSION TOOLKIT · ZERO DEPENDENCIES</div>
           </div>
-          <p style={{ color: "#444", fontSize: 13, margin: 0, letterSpacing: 1 }}>
-            IMAGE · PDF · DOCUMENT · AI CONVERSION TOOLKIT
-          </p>
         </div>
-
-        {/* Filter tabs */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
-          {categories.map((c) => (
-            <button key={c.id} onClick={() => setFilter(c.id)} style={{
-              padding: "6px 14px", borderRadius: 20, border: `1px solid ${filter === c.id ? "#00ff9d" : "#1a1a2e"}`,
-              background: filter === c.id ? "#00ff9d15" : "transparent",
-              color: filter === c.id ? "#00ff9d" : "#444", cursor: "pointer",
-              fontSize: 11, fontFamily: "monospace", fontWeight: 700, letterSpacing: 1,
-              transition: "all 0.15s",
-            }}>{c.label}</button>
-          ))}
-        </div>
-
-        {/* Tool Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
-          {filtered.map((tool) => {
-            const accent = CATEGORY_COLORS[tool.category];
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+          {cats.map(c => {
+            const on = filter === c;
             return (
-              <button key={tool.id} onClick={() => setActiveTool(tool)} style={{
-                background: "#0d0d1a", border: `1px solid #1a1a2e`,
-                borderRadius: 14, padding: 20, textAlign: "left", cursor: "pointer",
-                transition: "all 0.2s", display: "flex", flexDirection: "column", gap: 10,
-                position: "relative", overflow: "hidden",
-              }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.border = `1px solid ${accent}50`;
-                  e.currentTarget.style.boxShadow = `0 0 20px ${accent}15`;
-                  e.currentTarget.style.transform = "translateY(-2px)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.border = "1px solid #1a1a2e";
-                  e.currentTarget.style.boxShadow = "none";
-                  e.currentTarget.style.transform = "translateY(0)";
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{
-                    width: 38, height: 38, borderRadius: 8, background: `${accent}15`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 16, color: accent, border: `1px solid ${accent}25`,
-                  }}>{tool.icon}</div>
-                  <div style={{
-                    padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 700,
-                    background: `${accent}15`, color: accent, border: `1px solid ${accent}30`,
-                  }}>{tool.tag}</div>
-                </div>
-                <div>
-                  <div style={{ color: "#ddd", fontWeight: 700, fontSize: 13, marginBottom: 3 }}>{tool.label}</div>
-                  <div style={{ color: "#444", fontSize: 11 }}>{tool.desc}</div>
-                </div>
-                <div style={{
-                  position: "absolute", bottom: -10, right: -10, width: 60, height: 60,
-                  borderRadius: "50%", background: `${accent}08`,
-                }} />
-              </button>
+              <button key={c} onClick={() => setFilter(c)} style={{
+                padding: "5px 12px", borderRadius: 20, fontSize: 10, fontWeight: 800,
+                letterSpacing: 1, fontFamily: "monospace",
+                border: `1px solid ${on ? C.green : C.border}`,
+                background: on ? `${C.green}14` : "transparent",
+                color: on ? C.green : C.muted, cursor: "pointer", transition: "all 0.14s",
+              }}>{c}</button>
             );
           })}
         </div>
-
+        {/* Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 9 }}>
+          {filtered.map(t => <Card key={t.id} tool={t} onClick={() => setActive(t)} />)}
+        </div>
         {/* Legend */}
-        <div style={{ marginTop: 32, display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center" }}>
-          {[
-            { tag: "INSTANT", color: "#00ff9d", desc: "Runs in browser" },
-            { tag: "NODE.JS", color: "#7c6fcd", desc: "Needs backend" },
-            { tag: "AI API", color: "#ff6b35", desc: "External AI API" },
-            { tag: "BACKEND", color: "#7c6fcd", desc: "Server required" },
-          ].map(({ tag, color, desc }) => (
-            <div key={tag} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <div style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
-              <span style={{ color: color, fontSize: 10, fontWeight: 700 }}>{tag}</span>
-              <span style={{ color: "#333", fontSize: 10 }}>— {desc}</span>
-            </div>
+        <div style={{ marginTop: 30, display: "flex", gap: isMobile ? 10 : 20, flexWrap: "wrap", justifyContent: "center" }}>
+          {[[C.green,"BROWSER","client-side"],[C.orange,"AI / API","external service"],[C.purple,"NODE.JS","server required"]].map(([col,lbl,note]) => (
+            <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: col, boxShadow: `0 0 5px ${col}` }} />
+              <span style={{ color: col, fontSize: 10, fontFamily: "monospace", fontWeight: 700 }}>{lbl}</span>
+              <span style={{ color: "#1e1e30", fontSize: 10 }}>— {note}</span>            </div>
           ))}
         </div>
       </div>
-
-      {activeTool && <ToolPanel tool={activeTool} onClose={() => setActiveTool(null)} />}
+      {active && <Modal tool={active} onClose={() => setActive(null)} />}
     </div>
   );
 }
