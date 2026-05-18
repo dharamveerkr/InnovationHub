@@ -88,7 +88,7 @@ export default function Contact() {
           <a href="https://linkedin.com/in/dharamveerkr" target="_blank" rel="noopener noreferrer" className="social-link" style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span>💼</span> LinkedIn
           </a>
-          <a href="https://github.com/dharamveerkz" target="_blank" rel="noopener noreferrer" className="social-link" style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <a href="https://github.com/dharamveerkr" target="_blank" rel="noopener noreferrer" className="social-link" style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span>🐙</span> GitHub
           </a>
           <a href="https://instagram.com/imdharamvrr" target="_blank" rel="noopener noreferrer" className="social-link" style={{ fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
