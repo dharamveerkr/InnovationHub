@@ -8,11 +8,12 @@ import KalaaCart from '../ideas/KalaaCart';
 import Crafix from '../ideas/Crafix';
 import FileForge from '../ideas/FileForge';
 import VeerCraft from '../ideas/VeerCraft';
+import Craftrix from '../ideas/Craftrix';
 
 
 
-const PROJECT_COUNT = 7; 
-const PROTOTYPE_NAMES = ['HealthScan AI', 'ArtBridge', 'SchoolERP', 'KalaaCart', 'Crafix', 'FileForge', 'VeerCraft' ];
+const PROJECT_COUNT = 8; 
+const PROTOTYPE_NAMES = ['HealthScan AI', 'ArtBridge', 'SchoolERP', 'KalaaCart', 'Crafix', 'FileForge', 'VeerCraft', 'Craftrix' ];
 
 export default function MainSection() {
   return (
@@ -94,6 +95,7 @@ export default function MainSection() {
           <VeerCraft />
           <Crafix />
           <FileForge />
+          <Craftrix />
           
 
 
