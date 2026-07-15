@@ -12,7 +12,7 @@ import Craftrix from '../ideas/Craftrix';
 
 
 
-const PROJECT_COUNT = 8; 
+const PROJECT_COUNT = 08; 
 const PROTOTYPE_NAMES = ['HealthScan AI', 'ArtBridge', 'SchoolERP', 'KalaaCart', 'Crafix', 'FileForge', 'VeerCraft', 'Craftrix' ];
 
 export default function MainSection() {
