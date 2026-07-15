@@ -20,7 +20,6 @@ const FontStyle = () => (
 );
 
 /* ---------------- COLORS ---------------- */
-
 const GOLD = "#c8a23a";
 const GOLD_LIGHT = "#e2c878";
 const GOLD_DIM = "#a4832c";
