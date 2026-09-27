@@ -1,6 +1,6 @@
 import Head from 'next/head';
 
-// 🔹 IMPORT YOUR IDEAS HERE — just add new lines as you create them
+// 🔹 STEP 1: Import your prototype components here
 import HealthScanAI from '../ideas/HealthScanAI';
 import ArtBridge from '../ideas/ArtBridge';
 import SchoolERP from '../ideas/SchoolERP';
@@ -10,10 +10,20 @@ import FileForge from '../ideas/FileForge';
 import VeerCraft from '../ideas/VeerCraft';
 import Craftrix from '../ideas/Craftrix';
 
+// 🔹 STEP 2: Add the display names for the animated ticker
+const PROTOTYPE_NAMES = [
+  'HealthScan AI', 
+  'ArtBridge', 
+  'SchoolERP', 
+  'KalaaCart', 
+  'Crafix', 
+  'FileForge', 
+  'VeerCraft', 
+  'Craftrix'
+  // 'New Prototype' // <-- Add future names here
+];
 
-
-const PROJECT_COUNT = 08; 
-const PROTOTYPE_NAMES = ['HealthScan AI', 'ArtBridge', 'SchoolERP', 'KalaaCart', 'Crafix', 'FileForge', 'VeerCraft', 'Craftrix' ];
+const PROJECT_COUNT = PROTOTYPE_NAMES.length; 
 
 export default function MainSection() {
   return (
@@ -39,17 +49,20 @@ export default function MainSection() {
             prototype.
           </h1>
         </div>
+        
         <div className="fade-in delay-2">
           <p className="hero-desc">
             I build working prototypes for every startup idea I have — shipped fast, iterated publicly. 
             Each project below is a real, functioning product. No mockups, no decks.
           </p>
+          
           <div className="hero-stat">
             <div>
               <div className="stat-num">{String(PROJECT_COUNT).padStart(2, '0')}</div>
               <div className="stat-label">Prototypes</div>
             </div>
-            <div>              <div className="stat-num">∞</div>
+            <div>              
+              <div className="stat-num">∞</div>
               <div className="stat-label">Ideas</div>
             </div>
             <div>
@@ -65,13 +78,13 @@ export default function MainSection() {
         <div className="ticker-track">
           {/* First set */}
           {PROTOTYPE_NAMES.map((name, i) => (
-            <span className="ticker-item" key={`a-${i}`}>
+            <span className="ticker-item" key={`a-${name.replace(/\s+/g, '-')}`}>
               {name} <span className="ticker-dot">◆</span>
             </span>
           ))}
           {/* Duplicated set for seamless infinite loop */}
           {PROTOTYPE_NAMES.map((name, i) => (
-            <span className="ticker-item" key={`b-${i}`}>
+            <span className="ticker-item" key={`b-${name.replace(/\s+/g, '-')}`}>
               {name} <span className="ticker-dot">◆</span>
             </span>
           ))}
@@ -88,6 +101,7 @@ export default function MainSection() {
         </div>
 
         <div className="projects">
+          {/* 🔹 STEP 3: Render your prototype components here */}
           <KalaaCart />
           <ArtBridge />
           <SchoolERP />
@@ -97,9 +111,9 @@ export default function MainSection() {
           <FileForge />
           <Craftrix />
           
-
-
+          {/* <NewPrototype /> */} {/* <-- Add future components here */}
         </div>
-      </main>    </>
+      </main>
+    </>
   );
 }
