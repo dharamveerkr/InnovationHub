@@ -95,7 +95,7 @@ function Eyebrow({ children, center }) {
 function Stars({ rating }) {
   const full = Math.round(rating);
   return (
-    <span style={{ color: GOLD }}>
+    <span style={{ color: GOLD }} aria-label={`${rating} out of 5 stars`}>
       {"★".repeat(full)}
       <span className="opacity-30">{"★".repeat(5 - full)}</span>
     </span>
@@ -117,8 +117,11 @@ export default function CraftrixSite() {
   const [newsSubbed, setNewsSubbed] = useState(false);
   const [selectedColors, setSelectedColors] = useState({});
   const [addedFlash, setAddedFlash] = useState({});
+  
   const toastTimer = useRef(null);
   const newsTimer = useRef(null);
+  const flashTimers = useRef({});
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     const t = setInterval(() => setSlide((s) => (s + 1) % HERO_SLIDES.length), 5500);
@@ -133,6 +136,13 @@ export default function CraftrixSite() {
     }
   }, [searchOpen]);
 
+  // Auto-focus search input when opened
+  useEffect(() => {
+    if (searchOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [searchOpen]);
+
   function showToast(msg) {
     setToast({ show: true, msg });
     clearTimeout(toastTimer.current);
@@ -142,8 +152,13 @@ export default function CraftrixSite() {
   function toggleWishlist(id) {
     setWishlist((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else { next.add(id); showToast("Added to wishlist ♥"); }
+      if (next.has(id)) {
+        next.delete(id);
+        showToast("Removed from wishlist");
+      } else { 
+        next.add(id); 
+        showToast("Added to wishlist ♥"); 
+      }
       return next;
     });
   }
@@ -154,9 +169,16 @@ export default function CraftrixSite() {
       if (existing) return prev.map((c) => (c.id === product.id ? { ...c, qty: c.qty + 1 } : c));
       return [...prev, { ...product, qty: 1, size: "M" }];
     });
+    
     setAddedFlash((f) => ({ ...f, [product.id]: true }));
-    setTimeout(() => setAddedFlash((f) => ({ ...f, [product.id]: false })), 1400);
-    showToast(product.name + " added to bag");
+    
+    // Clear existing timer for this product to prevent race conditions on rapid clicks
+    if (flashTimers.current[product.id]) clearTimeout(flashTimers.current[product.id]);
+    flashTimers.current[product.id] = setTimeout(() => {
+      setAddedFlash((f) => ({ ...f, [product.id]: false }));
+    }, 1400);
+    
+    showToast(`${product.name} added to bag`);
   }
 
   function changeQty(id, delta) {
@@ -193,11 +215,13 @@ export default function CraftrixSite() {
       {/* ANNOUNCEMENT BAR */}
       <div className="h-9 overflow-hidden flex items-center border-b" style={{ background: BLACK, borderColor: "rgba(200,162,58,0.25)" }}>
         <div className="flex gap-16 whitespace-nowrap animate-marquee" style={{ paddingLeft: "100%" }}>
-          {[...Array(2)].flatMap(() => [
-            "Free Shipping Above ₹1499", "Easy Returns Within 7 Days", "Cash On Delivery Available", "Premium Quality Guaranteed",
-          ]).map((t, i) => (
-            <span key={i} className="flex items-center gap-2 text-[11.5px] tracking-wide text-neutral-200">
-              <span style={{ color: GOLD, fontSize: 7 }}>◆</span>{t}
+          {Array.from({ length: 2 }).map((_, setIdx) => (
+            <span key={setIdx} className="flex gap-16 whitespace-nowrap">
+              {["Free Shipping Above ₹1499", "Easy Returns Within 7 Days", "Cash On Delivery Available", "Premium Quality Guaranteed"].map((t, i) => (
+                <span key={`${setIdx}-${i}`} className="flex items-center gap-2 text-[11.5px] tracking-wide text-neutral-200">
+                  <span style={{ color: GOLD, fontSize: 7 }}>◆</span>{t}
+                </span>
+              ))}
             </span>
           ))}
         </div>
@@ -216,20 +240,24 @@ export default function CraftrixSite() {
 
           <nav className="hidden lg:flex gap-9">
             {NAV_LINKS.map((link, i) => (
-              <a key={link} href="#" className={`text-[13px] font-medium relative pb-1.5 transition-colors ${i === 0 ? "text-amber-200" : "text-neutral-300 hover:text-amber-200"}`}>
+              <a 
+                key={link} 
+                href={`#${link.toLowerCase().replace(/\s+/g, '-')}`} 
+                className={`text-[13px] font-medium relative pb-1.5 transition-colors ${i === 0 ? "text-amber-200" : "text-neutral-300 hover:text-amber-200"}`}
+              >
                 {link}
               </a>
             ))}
           </nav>
 
           <div className="flex items-center gap-5">
-            <button onClick={() => setSearchOpen(true)} className="text-white hover:text-amber-300 transition-colors" aria-label="Search">
+            <button type="button" onClick={() => setSearchOpen(true)} className="text-white hover:text-amber-300 transition-colors" aria-label="Search">
               <Search size={19} strokeWidth={1.5} />
             </button>
-            <button className="hidden md:block text-white hover:text-amber-300 transition-colors" aria-label="Account">
+            <button type="button" className="hidden md:block text-white hover:text-amber-300 transition-colors" aria-label="Account">
               <User size={19} strokeWidth={1.5} />
             </button>
-            <button onClick={() => document.getElementById("shop")?.scrollIntoView({ behavior: "smooth" })} className="relative text-white hover:text-amber-300 transition-colors" aria-label="Wishlist">
+            <button type="button" onClick={() => document.getElementById("shop")?.scrollIntoView({ behavior: "smooth" })} className="relative text-white hover:text-amber-300 transition-colors" aria-label="Wishlist">
               <Heart size={19} strokeWidth={1.5} />
               {wishlist.size > 0 && (
                 <span className="absolute -top-2 -right-2.5 w-4 h-4 rounded-full text-[9.5px] font-bold flex items-center justify-center" style={{ background: GOLD, color: BLACK }}>
@@ -237,7 +265,7 @@ export default function CraftrixSite() {
                 </span>
               )}
             </button>
-            <button onClick={() => setCartOpen(true)} className="relative text-white hover:text-amber-300 transition-colors" aria-label="Cart">
+            <button type="button" onClick={() => setCartOpen(true)} className="relative text-white hover:text-amber-300 transition-colors" aria-label="Cart">
               <ShoppingBag size={19} strokeWidth={1.5} />
               {cartCount > 0 && (
                 <span className="absolute -top-2 -right-2.5 w-4 h-4 rounded-full text-[9.5px] font-bold flex items-center justify-center" style={{ background: GOLD, color: BLACK }}>
@@ -245,7 +273,7 @@ export default function CraftrixSite() {
                 </span>
               )}
             </button>
-            <button onClick={() => setMobileOpen(true)} className="lg:hidden text-white" aria-label="Menu">
+            <button type="button" onClick={() => setMobileOpen(true)} className="lg:hidden text-white" aria-label="Menu">
               <Menu size={24} strokeWidth={1.5} />
             </button>
           </div>
@@ -255,12 +283,14 @@ export default function CraftrixSite() {
       {/* MOBILE NAV */}
       <div className={`fixed inset-0 z-[100] flex flex-col p-8 transition-transform duration-500 ${mobileOpen ? "translate-x-0" : "translate-x-full"}`} style={{ background: BLACK }}>
         <div className="flex justify-end mb-12">
-          <button onClick={() => setMobileOpen(false)} className="text-white"><X size={28} /></button>
+          <button type="button" onClick={() => setMobileOpen(false)} className="text-white" aria-label="Close menu"><X size={28} /></button>
         </div>
         <ul className="flex flex-col gap-6">
           {NAV_LINKS.map((link) => (
             <li key={link}>
-              <a href="#" onClick={() => setMobileOpen(false)} className="font-display text-3xl text-white hover:text-amber-300 transition-colors">{link}</a>
+              <a href={`#${link.toLowerCase().replace(/\s+/g, '-')}`} onClick={() => setMobileOpen(false)} className="font-display text-3xl text-white hover:text-amber-300 transition-colors">
+                {link}
+              </a>
             </li>
           ))}
         </ul>
@@ -268,9 +298,9 @@ export default function CraftrixSite() {
 
       {/* SEARCH OVERLAY */}
       <div className={`fixed inset-0 z-[110] flex flex-col items-center justify-center transition-opacity duration-300 ${searchOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`} style={{ background: "rgba(13,13,13,0.97)" }}>
-        <button onClick={() => setSearchOpen(false)} className="absolute top-8 right-10 text-white text-3xl"><X size={28} /></button>
+        <button type="button" onClick={() => setSearchOpen(false)} className="absolute top-8 right-10 text-white text-3xl" aria-label="Close search"><X size={28} /></button>
         <input
-          autoFocus={searchOpen}
+          ref={searchInputRef}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           type="text"
@@ -310,7 +340,14 @@ export default function CraftrixSite() {
 
         <div className="absolute bottom-9 left-6 md:left-16 z-10 flex gap-2.5">
           {HERO_SLIDES.map((_, i) => (
-            <button key={i} onClick={() => setSlide(i)} className="h-0.5 transition-all" style={{ width: i === slide ? 40 : 26, background: i === slide ? GOLD : "rgba(255,255,255,0.3)" }} />
+            <button 
+              key={i} 
+              type="button"
+              onClick={() => setSlide(i)} 
+              className="h-0.5 transition-all" 
+              style={{ width: i === slide ? 40 : 26, background: i === slide ? GOLD : "rgba(255,255,255,0.3)" }} 
+              aria-label={`Go to slide ${i + 1}`}
+            />
           ))}
         </div>
       </section>
@@ -324,7 +361,7 @@ export default function CraftrixSite() {
           </div>
           <div className="flex gap-8 overflow-x-auto no-scrollbar pb-5">
             {CATEGORIES.map((c) => (
-              <div key={c.name} className="flex-none w-[140px] text-center cursor-pointer group">
+              <div key={c.name} className="flex-none w-[140px] text-center cursor-pointer group" role="button" tabIndex={0} aria-label={`Explore ${c.name}`}>
                 <div className="w-[140px] h-[140px] rounded-full overflow-hidden border transition-all group-hover:shadow-xl" style={{ borderColor: "rgba(200,162,58,0.25)" }}>
                   <img src={c.img} alt={c.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
                 </div>
@@ -346,7 +383,7 @@ export default function CraftrixSite() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px" style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.08)" }}>
             {WHY.map(({ icon: Icon, title, desc }) => (
               <div key={title} className="p-9 text-center transition-colors hover:bg-neutral-900" style={{ background: BLACK }}>
-                <Icon size={32} strokeWidth={1.3} style={{ color: GOLD }} className="mx-auto mb-4" />
+                <Icon size={32} strokeWidth={1.3} style={{ color: GOLD }} className="mx-auto mb-4" aria-hidden="true" />
                 <h4 className="text-white text-sm font-semibold mb-1.5">{title}</h4>
                 <p className="text-neutral-500 text-xs">{desc}</p>
               </div>
@@ -370,7 +407,7 @@ export default function CraftrixSite() {
                 <div className="absolute bottom-0 left-0 right-0 p-7 z-[2]">
                   <span className="text-[11px] tracking-[0.22em] uppercase font-semibold" style={{ color: GOLD_LIGHT }}>{c.tag}</span>
                   <h3 className="font-display text-white text-2xl my-3">{c.title}</h3>
-                  <a href="#" className="text-white text-[11.5px] tracking-[0.12em] uppercase font-semibold inline-flex items-center gap-2 border-b pb-1" style={{ borderColor: GOLD }}>
+                  <a href="#shop" className="text-white text-[11.5px] tracking-[0.12em] uppercase font-semibold inline-flex items-center gap-2 border-b pb-1" style={{ borderColor: GOLD }}>
                     Shop Now <ChevronRight size={13} />
                   </a>
                 </div>
@@ -401,13 +438,15 @@ export default function CraftrixSite() {
                       </div>
                     )}
                     <button
+                      type="button"
                       onClick={() => toggleWishlist(p.id)}
                       className="absolute top-2.5 right-2.5 w-8 h-8 rounded-full bg-white/90 flex items-center justify-center transition-transform hover:scale-110 z-[3]"
+                      aria-label={wishlist.has(p.id) ? "Remove from wishlist" : "Add to wishlist"}
                     >
                       <Heart size={16} strokeWidth={1.6} fill={wishlist.has(p.id) ? GOLD : "none"} stroke={wishlist.has(p.id) ? GOLD : BLACK} />
                     </button>
                     <img src={p.img} alt={p.name} className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500 group-hover:opacity-0" />
-                    <img src={p.img2} alt={p.name + " alt"} className="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                    <img src={p.img2} alt={`${p.name} alternate view`} className="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
                     <div className="absolute bottom-0 left-0 right-0 text-center py-3 text-[11px] tracking-[0.12em] uppercase font-semibold text-white translate-y-full transition-transform duration-300 group-hover:translate-y-0 z-[3]" style={{ background: BLACK }}>
                       Quick View
                     </div>
@@ -427,13 +466,16 @@ export default function CraftrixSite() {
                       {p.colors.map((c) => (
                         <button
                           key={c}
+                          type="button"
                           onClick={() => setSelectedColors((s) => ({ ...s, [p.id]: c }))}
                           className="w-4 h-4 rounded-full border-2 border-white transition-shadow"
                           style={{ background: c, boxShadow: selColor === c ? `0 0 0 1.5px ${GOLD}` : "0 0 0 1px #ddd" }}
+                          aria-label={`Select color ${c}`}
                         />
                       ))}
                     </div>
                     <button
+                      type="button"
                       onClick={() => addToCart(p)}
                       className="w-full py-3 text-[11px] tracking-[0.1em] uppercase font-semibold rounded-sm transition-colors flex items-center justify-center gap-1.5"
                       style={{ background: addedFlash[p.id] ? "#1a7a3c" : BLACK, color: "#fff" }}
@@ -448,6 +490,7 @@ export default function CraftrixSite() {
 
           <div className="text-center mt-14">
             <button
+              type="button"
               onClick={() => setVisibleCount((v) => (v >= PRODUCTS.length ? 4 : PRODUCTS.length))}
               className="px-9 py-4 text-xs tracking-[0.14em] uppercase font-semibold rounded-sm transition-colors hover:text-black"
               style={{ background: BLACK, color: "#fff" }}
@@ -475,11 +518,11 @@ export default function CraftrixSite() {
               <ul className="flex flex-col gap-3.5 mb-8">
                 {["Premium fabrics sourced with care", "Rigorous quality assurance", "Proudly made in India"].map((t) => (
                   <li key={t} className="flex items-center gap-3 text-sm text-neutral-200">
-                    <Check size={18} style={{ color: GOLD }} /> {t}
+                    <Check size={18} style={{ color: GOLD }} aria-hidden="true" /> {t}
                   </li>
                 ))}
               </ul>
-              <a href="#" className="inline-block px-8 py-4 text-xs tracking-[0.14em] uppercase font-semibold rounded-sm border border-white/40 text-white hover:border-amber-300 hover:text-amber-200 transition-colors">
+              <a href="#collections" className="inline-block px-8 py-4 text-xs tracking-[0.14em] uppercase font-semibold rounded-sm border border-white/40 text-white hover:border-amber-300 hover:text-amber-200 transition-colors">
                 Know More About Us
               </a>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-14 pt-9 border-t border-white/10">
@@ -492,7 +535,7 @@ export default function CraftrixSite() {
               </div>
             </div>
             <div className="rounded overflow-hidden">
-              <img src="https://images.unsplash.com/photo-1620799140408-edc6dcb6d633?q=80&w=900&auto=format&fit=crop" alt="Craftrix story" className="w-full" />
+              <img src="https://images.unsplash.com/photo-1620799140408-edc6dcb6d633?q=80&w=900&auto=format&fit=crop" alt="Craftrix story and craftsmanship" className="w-full" />
             </div>
           </div>
         </div>
@@ -513,7 +556,7 @@ export default function CraftrixSite() {
               { icon: Package, title: "Sports Kits", desc: "Team jerseys & gear" },
             ].map(({ icon: Icon, title, desc }) => (
               <div key={title} className="bg-white p-9 text-center">
-                <Icon size={32} strokeWidth={1.3} style={{ color: GOLD_DIM }} className="mx-auto mb-4" />
+                <Icon size={32} strokeWidth={1.3} style={{ color: GOLD_DIM }} className="mx-auto mb-4" aria-hidden="true" />
                 <h4 className="text-sm font-semibold mb-1.5">{title}</h4>
                 <p className="text-neutral-400 text-xs">{desc}</p>
               </div>
@@ -537,10 +580,10 @@ export default function CraftrixSite() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {TESTIMONIALS.map((t) => (
               <div key={t.name} className="bg-white p-9 rounded border border-black/[0.06]">
-                <span className="block mb-4" style={{ color: GOLD, letterSpacing: 2 }}>★★★★★</span>
+                <span className="block mb-4" style={{ color: GOLD, letterSpacing: 2 }} aria-hidden="true">★★★★★</span>
                 <p className="text-[15px] leading-relaxed italic text-neutral-700 mb-6">"{t.text}"</p>
                 <div className="flex items-center gap-3">
-                  <img src={t.avatar} alt={t.name} className="w-10 h-10 rounded-full object-cover" />
+                  <img src={t.avatar} alt={`${t.name} avatar`} className="w-10 h-10 rounded-full object-cover" />
                   <div>
                     <div className="text-[13.5px] font-semibold">{t.name}</div>
                     <div className="text-[11px] text-neutral-400">Verified Buyer</div>
@@ -595,7 +638,7 @@ export default function CraftrixSite() {
               </p>
               <div className="flex gap-3">
                 {[Instagram, Facebook, Twitter].map((Icon, i) => (
-                  <a key={i} href="#" className="w-9 h-9 rounded-full border border-white/15 flex items-center justify-center hover:bg-amber-400 hover:border-amber-400 hover:text-black transition-colors">
+                  <a key={i} href="#" className="w-9 h-9 rounded-full border border-white/15 flex items-center justify-center hover:bg-amber-400 hover:border-amber-400 hover:text-black transition-colors" aria-label={`Follow us on ${Icon.name}`}>
                     <Icon size={15} />
                   </a>
                 ))}
@@ -620,27 +663,33 @@ export default function CraftrixSite() {
             <div>
               <h5 className="text-white text-[13px] tracking-wide uppercase mb-5">Newsletter</h5>
               <p className="text-[12.5px] mb-4">Stay updated with new arrivals and exclusive offers.</p>
-              <input type="email" placeholder="Enter your email" className="w-full px-4 py-3 bg-white/5 border border-white/15 text-white rounded-sm text-xs mb-2.5 outline-none" />
-              <button className="w-full py-3 text-xs tracking-[0.1em] uppercase font-semibold rounded-sm" style={{ background: GOLD, color: BLACK }}>Subscribe</button>
+              <form onSubmit={(e) => { e.preventDefault(); showToast("Subscribed successfully!"); }}>
+                <input type="email" required placeholder="Enter your email" className="w-full px-4 py-3 bg-white/5 border border-white/15 text-white rounded-sm text-xs mb-2.5 outline-none focus:border-amber-300" />
+                <button type="submit" className="w-full py-3 text-xs tracking-[0.1em] uppercase font-semibold rounded-sm" style={{ background: GOLD, color: BLACK }}>Subscribe</button>
+              </form>
             </div>
           </div>
           <div className="flex flex-col sm:flex-row justify-between items-center gap-3 py-6 text-xs text-neutral-500">
-            <span>© 2026 CRAFTRIX. All Rights Reserved.</span>
+            <span>© {new Date().getFullYear()} CRAFTRIX. All Rights Reserved.</span>
             <div className="flex gap-2.5">
               {["VISA", "MC", "UPI", "COD"].map((p) => (
                 <span key={p} className="border border-white/15 px-2.5 py-1 rounded text-[10px] tracking-wide">{p}</span>
               ))}
             </div>
           </div>
-        </div>
+8        </div>
       </footer>
 
       {/* CART DRAWER */}
-      <div onClick={() => setCartOpen(false)} className={`fixed inset-0 bg-black/50 z-[199] transition-opacity ${cartOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`} />
-      <div className={`fixed top-0 right-0 bottom-0 w-full sm:w-[420px] bg-white z-[200] flex flex-col transition-transform duration-500 ${cartOpen ? "translate-x-0" : "translate-x-full"}`}>
+      <div 
+        onClick={() => setCartOpen(false)} 
+        className={`fixed inset-0 bg-black/50 z-[199] transition-opacity ${cartOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`} 
+        aria-hidden={!cartOpen}
+      />
+      <div className={`fixed top-0 right-0 bottom-0 w-full sm:w-[420px] bg-white z-[200] flex flex-col transition-transform duration-500 ${cartOpen ? "translate-x-0" : "translate-x-full"}`} role="dialog" aria-modal="true" aria-label="Shopping cart">
         <div className="flex justify-between items-center px-7 py-6 border-b border-neutral-200">
           <h3 className="font-display text-xl">Shopping Bag</h3>
-          <button onClick={() => setCartOpen(false)} className="text-neutral-400 text-2xl"><X size={22} /></button>
+          <button type="button" onClick={() => setCartOpen(false)} className="text-neutral-400 text-2xl" aria-label="Close cart"><X size={22} /></button>
         </div>
         <div className="flex-1 overflow-y-auto px-7 py-5">
           {cart.length === 0 ? (
@@ -656,11 +705,11 @@ export default function CraftrixSite() {
                   <div className="text-[13.5px] font-semibold mb-1">{c.name}</div>
                   <div className="text-[11.5px] text-neutral-400 mb-2">Size: {c.size} · Qty: {c.qty}</div>
                   <div className="flex items-center gap-2.5">
-                    <button onClick={() => changeQty(c.id, -1)} className="w-[22px] h-[22px] border border-neutral-300 rounded text-xs flex items-center justify-center"><Minus size={11} /></button>
-                    <span className="text-sm">{c.qty}</span>
-                    <button onClick={() => changeQty(c.id, 1)} className="w-[22px] h-[22px] border border-neutral-300 rounded text-xs flex items-center justify-center"><Plus size={11} /></button>
+                    <button type="button" onClick={() => changeQty(c.id, -1)} className="w-[22px] h-[22px] border border-neutral-300 rounded text-xs flex items-center justify-center hover:bg-neutral-100" aria-label="Decrease quantity"><Minus size={11} /></button>
+                    <span className="text-sm min-w-[20px] text-center">{c.qty}</span>
+                    <button type="button" onClick={() => changeQty(c.id, 1)} className="w-[22px] h-[22px] border border-neutral-300 rounded text-xs flex items-center justify-center hover:bg-neutral-100" aria-label="Increase quantity"><Plus size={11} /></button>
                   </div>
-                  <button onClick={() => removeFromCart(c.id)} className="text-red-600 text-[11px] mt-2 underline flex items-center gap-1">
+                  <button type="button" onClick={() => removeFromCart(c.id)} className="text-red-600 text-[11px] mt-2 underline flex items-center gap-1 hover:text-red-700">
                     <Trash2 size={11} /> Remove
                   </button>
                 </div>
@@ -677,7 +726,7 @@ export default function CraftrixSite() {
             <div className="flex justify-between text-[17px] font-bold border-t border-neutral-200 pt-3.5 mt-3.5">
               <span>Total</span><span>₹{total.toLocaleString("en-IN")}</span>
             </div>
-            <button className="w-full mt-4 py-4 text-xs tracking-[0.14em] uppercase font-semibold rounded-sm" style={{ background: GOLD, color: BLACK }}>
+            <button type="button" className="w-full mt-4 py-4 text-xs tracking-[0.14em] uppercase font-semibold rounded-sm hover:opacity-90 transition-opacity" style={{ background: GOLD, color: BLACK }}>
               Proceed to Checkout
             </button>
           </div>
@@ -685,8 +734,13 @@ export default function CraftrixSite() {
       </div>
 
       {/* TOAST */}
-      <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 px-6 py-3.5 rounded-sm text-sm flex items-center gap-2.5 transition-all duration-300 z-[300] ${toast.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3 pointer-events-none"}`} style={{ background: BLACK, color: "#fff" }}>
-        <Check size={16} style={{ color: GOLD }} />
+      <div 
+        className={`fixed bottom-8 left-1/2 -translate-x-1/2 px-6 py-3.5 rounded-sm text-sm flex items-center gap-2.5 transition-all duration-300 z-[300] ${toast.show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3 pointer-events-none"}`} 
+        style={{ background: BLACK, color: "#fff" }}
+        role="status"
+        aria-live="polite"
+      >
+        <Check size={16} style={{ color: GOLD }} aria-hidden="true" />
         <span>{toast.msg}</span>
       </div>
     </div>
